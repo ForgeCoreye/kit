@@ -1,13 +1,30 @@
 import '@solana/test-matchers/toBeFrozenObject';
 
-import { SOLANA_ERROR__INSTRUCTION_PLANS__MESSAGE_CANNOT_ACCOMMODATE_PLAN, SolanaError } from '@solana/errors';
+import {
+    SOLANA_ERROR__INSTRUCTION_PLANS__MESSAGE_CANNOT_ACCOMMODATE_PLAN,
+    SOLANA_ERROR__TRANSACTION__TOO_MANY_ACCOUNT_ADDRESSES,
+    SOLANA_ERROR__TRANSACTION__TOO_MANY_ACCOUNTS_IN_INSTRUCTION,
+    SOLANA_ERROR__TRANSACTION__TOO_MANY_INSTRUCTIONS,
+    SOLANA_ERROR__TRANSACTION__TOO_MANY_SIGNER_ADDRESSES,
+    SolanaError,
+} from '@solana/errors';
 import { Instruction } from '@solana/instructions';
 import {
     appendTransactionMessageInstructions,
+    compileTransactionMessage,
     TransactionMessage,
     TransactionMessageWithFeePayer,
 } from '@solana/transaction-messages';
 import { getTransactionMessageSize, TRANSACTION_SIZE_LIMIT } from '@solana/transactions';
+
+jest.mock('@solana/transaction-messages', () => ({
+    ...jest.requireActual('@solana/transaction-messages'),
+    compileTransactionMessage: jest.fn(),
+}));
+const realCompileTransactionMessage =
+    jest.requireActual<typeof import('@solana/transaction-messages')>(
+        '@solana/transaction-messages',
+    ).compileTransactionMessage;
 
 import {
     createTransactionPlanner,
@@ -49,6 +66,10 @@ function getHelpers(createTransactionMessage: () => TransactionMessage & Transac
 }
 
 describe('createTransactionPlanner', () => {
+    beforeEach(() => {
+        jest.mocked(compileTransactionMessage).mockImplementation(realCompileTransactionMessage);
+    });
+
     describe('single scenarios', () => {
         /**
          *  [A: 42] ───────────────────▶ [Tx: A]
@@ -89,6 +110,106 @@ describe('createTransactionPlanner', () => {
                 }),
             );
         });
+    });
+
+    describe('transaction constraint scenarios', () => {
+        const CONSTRAINT_ERRORS: [string, SolanaError][] = [
+            [
+                'TOO_MANY_ACCOUNT_ADDRESSES',
+                new SolanaError(SOLANA_ERROR__TRANSACTION__TOO_MANY_ACCOUNT_ADDRESSES, {
+                    actualCount: 65,
+                    maxAllowed: 64,
+                }),
+            ],
+            [
+                'TOO_MANY_SIGNER_ADDRESSES',
+                new SolanaError(SOLANA_ERROR__TRANSACTION__TOO_MANY_SIGNER_ADDRESSES, {
+                    actualCount: 13,
+                    maxAllowed: 12,
+                }),
+            ],
+            [
+                'TOO_MANY_INSTRUCTIONS',
+                new SolanaError(SOLANA_ERROR__TRANSACTION__TOO_MANY_INSTRUCTIONS, {
+                    actualCount: 65,
+                    maxAllowed: 64,
+                }),
+            ],
+            [
+                'TOO_MANY_ACCOUNTS_IN_INSTRUCTION',
+                new SolanaError(SOLANA_ERROR__TRANSACTION__TOO_MANY_ACCOUNTS_IN_INSTRUCTION, {
+                    actualCount: 256,
+                    instructionIndex: 0,
+                    maxAllowed: 255,
+                }),
+            ],
+        ];
+
+        /**
+         *  [Seq]           ──────────▶   [Seq]
+         *   │  (B fails constraint           │
+         *   │   on A's candidate)            ├── [Tx: A]
+         *   ├── [A: 42]                      └── [Tx: B]
+         *   └── [B: 42]
+         */
+        it.each(CONSTRAINT_ERRORS)(
+            'splits into a new transaction when compileTransactionMessage would violate %s',
+            async (_name, constraintError) => {
+                expect.assertions(1);
+                const createTransactionMessage = createMockTransactionMessage;
+                const { instruction, singleTransactionPlan } = getHelpers(createTransactionMessage);
+                const instructionA = instruction('A', 42);
+                const instructionB = instruction('B', 42);
+
+                // A compiles normally in its fresh tx, then B throws a constraint error
+                // when compiled alongside A, then B compiles normally in its own fresh tx.
+                jest.mocked(compileTransactionMessage)
+                    // First call: A can be added in createNewMessage
+                    .mockImplementationOnce(realCompileTransactionMessage) // A fits in createNewMessage
+                    // Second call: B violates constraint when added to A's tx
+                    .mockImplementationOnce(() => {
+                        throw constraintError;
+                    })
+                    // Third call: B can be added in a fresh message
+                    .mockImplementationOnce(realCompileTransactionMessage);
+
+                const planner = createTransactionPlanner({ createTransactionMessage });
+                await expect(
+                    planner(
+                        sequentialInstructionPlan([
+                            singleInstructionPlan(instructionA),
+                            singleInstructionPlan(instructionB),
+                        ]),
+                    ),
+                ).resolves.toEqual(
+                    sequentialTransactionPlan([
+                        singleTransactionPlan([instructionA]),
+                        singleTransactionPlan([instructionB]),
+                    ]),
+                );
+            },
+        );
+
+        /**
+         *  [A: 42] ──────────▶  Error
+         *  (always fails constraint)
+         */
+        it.each(CONSTRAINT_ERRORS)(
+            'propagates %s from compileTransactionMessage when even a fresh message cannot accommodate the plan',
+            async (_name, constraintError) => {
+                expect.assertions(1);
+                const createTransactionMessage = createMockTransactionMessage;
+                const { instruction } = getHelpers(createTransactionMessage);
+                const instructionA = instruction('A', 42);
+
+                jest.mocked(compileTransactionMessage).mockImplementation(() => {
+                    throw constraintError;
+                });
+
+                const planner = createTransactionPlanner({ createTransactionMessage });
+                await expect(planner(singleInstructionPlan(instructionA))).rejects.toThrow(constraintError);
+            },
+        );
     });
 
     describe('sequential scenarios', () => {
