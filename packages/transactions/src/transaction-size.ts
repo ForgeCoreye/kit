@@ -26,6 +26,11 @@ export const TRANSACTION_PACKET_HEADER =
 export const TRANSACTION_SIZE_LIMIT = TRANSACTION_PACKET_SIZE - TRANSACTION_PACKET_HEADER;
 
 /**
+ * The maximum size of a version 1 transaction in bytes.
+ */
+export const V1_TRANSACTION_SIZE_LIMIT = 4096;
+
+/**
  * Gets the size of a given transaction in bytes.
  *
  * @example
@@ -69,8 +74,17 @@ export type SetTransactionWithinSizeLimitFromTransactionMessage<
 export function isTransactionWithinSizeLimit<TTransaction extends Transaction>(
     transaction: TTransaction,
 ): transaction is TransactionWithinSizeLimit & TTransaction {
-    return getTransactionSize(transaction) <= TRANSACTION_SIZE_LIMIT;
+    if (transaction.messageBytes.length === 0) {
+        // If there are no message bytes, then the transaction is empty and thus within the size limit.
+        return true;
+    }
+
+    const firstByte = transaction.messageBytes[0];
+    const sizeLimit = (firstByte & VERSION_FLAG_MASK) === 1 ? V1_TRANSACTION_SIZE_LIMIT : TRANSACTION_SIZE_LIMIT;
+    return getTransactionSize(transaction) <= sizeLimit;
 }
+
+const VERSION_FLAG_MASK = 0b01111111;
 
 /**
  * Asserts that a given transaction is within the size limit.
@@ -89,11 +103,19 @@ export function isTransactionWithinSizeLimit<TTransaction extends Transaction>(
 export function assertIsTransactionWithinSizeLimit<TTransaction extends Transaction>(
     transaction: TTransaction,
 ): asserts transaction is TransactionWithinSizeLimit & TTransaction {
+    if (transaction.messageBytes.length === 0) {
+        // If there are no message bytes, then the transaction is empty and thus within the size limit.
+        return;
+    }
+
+    const firstByte = transaction.messageBytes[0];
+    const sizeLimit = (firstByte & VERSION_FLAG_MASK) === 1 ? V1_TRANSACTION_SIZE_LIMIT : TRANSACTION_SIZE_LIMIT;
     const transactionSize = getTransactionSize(transaction);
-    if (transactionSize > TRANSACTION_SIZE_LIMIT) {
+
+    if (transactionSize > sizeLimit) {
         throw new SolanaError(SOLANA_ERROR__TRANSACTION__EXCEEDS_SIZE_LIMIT, {
             transactionSize,
-            transactionSizeLimit: TRANSACTION_SIZE_LIMIT,
+            transactionSizeLimit: sizeLimit,
         });
     }
 }

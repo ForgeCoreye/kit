@@ -6,7 +6,7 @@ import type {
 } from '@solana/transaction-messages';
 
 import { compileTransaction } from './compile-transaction';
-import { getTransactionSize, TRANSACTION_SIZE_LIMIT } from './transaction-size';
+import { getTransactionSize, TRANSACTION_SIZE_LIMIT, V1_TRANSACTION_SIZE_LIMIT } from './transaction-size';
 
 /**
  * Gets the compiled transaction size of a given transaction message in bytes.
@@ -20,6 +20,22 @@ export function getTransactionMessageSize(
     transactionMessage: TransactionMessage & TransactionMessageWithFeePayer,
 ): number {
     return getTransactionSize(compileTransaction(transactionMessage));
+}
+
+/**
+ * Returns the maximum allowed compiled size in bytes for a given transaction message.
+ *
+ * This depends on the version of the transaction message.
+ *
+ * @example
+ * ```ts
+ * const sizeLimit = getTransactionMessageSizeLimit(transactionMessage);
+ * ```
+ */
+export function getTransactionMessageSizeLimit(
+    transactionMessage: TransactionMessage & TransactionMessageWithFeePayer,
+): number {
+    return transactionMessage.version === 1 ? V1_TRANSACTION_SIZE_LIMIT : TRANSACTION_SIZE_LIMIT;
 }
 
 /**
@@ -40,7 +56,7 @@ export function isTransactionMessageWithinSizeLimit<
 >(
     transactionMessage: TTransactionMessage,
 ): transactionMessage is TransactionMessageWithinSizeLimit & TTransactionMessage {
-    return getTransactionMessageSize(transactionMessage) <= TRANSACTION_SIZE_LIMIT;
+    return getTransactionMessageSize(transactionMessage) <= getTransactionMessageSizeLimit(transactionMessage);
 }
 
 /**
@@ -64,10 +80,11 @@ export function assertIsTransactionMessageWithinSizeLimit<
     transactionMessage: TTransactionMessage,
 ): asserts transactionMessage is TransactionMessageWithinSizeLimit & TTransactionMessage {
     const transactionSize = getTransactionMessageSize(transactionMessage);
-    if (transactionSize > TRANSACTION_SIZE_LIMIT) {
+    const transactionSizeLimit = getTransactionMessageSizeLimit(transactionMessage);
+    if (transactionSize > transactionSizeLimit) {
         throw new SolanaError(SOLANA_ERROR__TRANSACTION__EXCEEDS_SIZE_LIMIT, {
             transactionSize,
-            transactionSizeLimit: TRANSACTION_SIZE_LIMIT,
+            transactionSizeLimit,
         });
     }
 }
