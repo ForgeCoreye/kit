@@ -1,5 +1,13 @@
 # @solana/programs
 
+## 6.6.0
+
+### Patch Changes
+
+- Updated dependencies []:
+    - @solana/addresses@6.6.0
+    - @solana/errors@6.6.0
+
 ## 6.5.0
 
 ### Patch Changes

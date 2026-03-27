@@ -1,5 +1,18 @@
 # @solana/rpc-subscriptions-api
 
+## 6.6.0
+
+### Patch Changes
+
+- Updated dependencies []:
+    - @solana/addresses@6.6.0
+    - @solana/keys@6.6.0
+    - @solana/rpc-subscriptions-spec@6.6.0
+    - @solana/rpc-transformers@6.6.0
+    - @solana/rpc-types@6.6.0
+    - @solana/transaction-messages@6.6.0
+    - @solana/transactions@6.6.0
+
 ## 6.5.0
 
 ### Patch Changes
